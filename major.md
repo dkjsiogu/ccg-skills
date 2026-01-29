@@ -16,8 +16,33 @@ $ARGUMENTS
 2. **必须调用 Copilot 执行前端任务** - 使用 Bash 工具执行 codeagent-wrapper
 3. **必须调用 Codex 审核代码** - 模块完成后 + 最终全局审核
 4. **禁止跳过任何一个 Stage** - 每个 Stage 完成后向用户报告
+5. **⛔ 强制检查点** - 每个 Stage 开始前必须检查工作流状态，有待审查则不能继续
 
 **违反以上任何一条，流程无效。**
+
+---
+
+## 工作流状态管理
+
+**每个 Stage 开始前必须执行检查**：
+
+```
+Bash({
+  command: "~/.claude/bin/ccg-workflow check || exit 1",
+  timeout: 5000,
+  description: "检查工作流状态"
+})
+```
+
+**如果返回 BLOCKED，必须先完成审查才能继续。**
+
+**状态转换规则**：
+```
+Stage 开始 → in_progress
+Stage 代码完成 → pending_review
+Codex 审查通过 → reviewed
+进入下一 Stage → in_progress
+```
 
 ---
 
@@ -61,11 +86,21 @@ TaskOutput({ task_id: "<task_id>", block: true, timeout: 600000 })
 
 `[模式：初始化]`
 
-**首先向 Monitor 报告 CCG 工作流启动**：
+**首先初始化工作流状态**：
 
 ```
 Bash({
-  command: "CCG_TASK_ID=$(~/.claude/bin/ccg-report start 'CCG Major: $ARGUMENTS') && echo \"CCG_TASK_ID=$CCG_TASK_ID\"",
+  command: "~/.claude/bin/ccg-workflow init major '$ARGUMENTS' '功能目标待确认'",
+  timeout: 5000,
+  description: "初始化工作流状态"
+})
+```
+
+**向 Monitor 报告 CCG 工作流启动**：
+
+```
+Bash({
+  command: "CCG_TASK_ID=$(~/.claude/bin/ccg-report start 'CCG Major: $ARGUMENTS') && echo \"CCG_TASK_ID=$CCG_TASK_ID\" && ~/.claude/bin/ccg-workflow set monitor_task_id \"$CCG_TASK_ID\"",
   timeout: 5000,
   description: "报告 CCG 启动到 Monitor"
 })
@@ -118,6 +153,16 @@ use_global_defaults = true
 
 ### Stage 1: Vibedev 需求收集 + 设计 + 任务分解 (CC 主导 + Codex 审核)
 
+**⛔ 强制检查点**：
+```
+Bash({ command: "~/.claude/bin/ccg-workflow check || exit 1", timeout: 5000 })
+```
+
+**更新工作流状态**：
+```
+Bash({ command: "~/.claude/bin/ccg-workflow stage 1 in_progress", timeout: 5000 })
+```
+
 **更新 Monitor 阶段**：
 ```
 Bash({ command: "~/.claude/bin/ccg-report stage '$CCG_TASK_ID' 'Stage 1: 需求/设计/任务分解'", timeout: 5000 })
@@ -167,11 +212,31 @@ Bash({
 - 根据需求细化技术栈信息
 - 更新 `.ccg/project.toml` 中的 `use_global_defaults = false`（如果有足够信息）
 
-**完成后向用户报告**: "Stage 1 完成，需求/设计/任务均通过 Codex 审核，共 N 个任务，后端 X 个，前端 Y 个。"
+**完成后**：
+```
+Bash({ command: "~/.claude/bin/ccg-workflow stage 1 pending_review", timeout: 5000 })
+```
+
+**向用户报告**: "Stage 1 完成，需求/设计/任务均通过 Codex 审核，共 N 个任务，后端 X 个，前端 Y 个。"
+
+**标记审查通过**（所有文档均已在子阶段审核通过）：
+```
+Bash({ command: "~/.claude/bin/ccg-workflow review 1 passed", timeout: 5000 })
+```
 
 ---
 
 ### Stage 2: Codex 最终审核任务列表
+
+**⛔ 强制检查点**：
+```
+Bash({ command: "~/.claude/bin/ccg-workflow check || exit 1", timeout: 5000 })
+```
+
+**更新工作流状态**：
+```
+Bash({ command: "~/.claude/bin/ccg-workflow stage 2 in_progress", timeout: 5000 })
+```
 
 **更新 Monitor 阶段**：
 ```
@@ -211,13 +276,28 @@ CODEX_EOF
 
 **处理结果**：
 - Codex 提出问题 → CC 调整任务后重新提交审核
-- Codex 全部通过 → 进入 Stage 3
+- Codex 全部通过 → 标记审查通过，进入 Stage 3
 
-**完成后向用户报告**: "Stage 2 完成，Codex 审核通过/有 N 处建议。"
+**审查通过后**：
+```
+Bash({ command: "~/.claude/bin/ccg-workflow review 2 passed", timeout: 5000 })
+```
+
+**向用户报告**: "Stage 2 完成，Codex 审核通过/有 N 处建议。"
 
 ---
 
 ### Stage 3: 逐模块执行 + 模块级审查
+
+**⛔ 强制检查点**：
+```
+Bash({ command: "~/.claude/bin/ccg-workflow check || exit 1", timeout: 5000 })
+```
+
+**更新工作流状态**：
+```
+Bash({ command: "~/.claude/bin/ccg-workflow stage 3 in_progress", timeout: 5000 })
+```
 
 **更新 Monitor 阶段**：
 ```
@@ -339,11 +419,31 @@ CODEX_EOF
 - 同时 Copilot 生成已完成模块的测试
 - 完成后各自审查
 
-**完成后向用户报告**: "Stage 3 完成，CC 完成 X 个后端任务，Copilot 完成 Y 个前端/测试/文档任务，全部通过模块审查。"
+**完成后**：
+```
+Bash({ command: "~/.claude/bin/ccg-workflow stage 3 pending_review", timeout: 5000 })
+```
+
+**向用户报告**: "Stage 3 完成，CC 完成 X 个后端任务，Copilot 完成 Y 个前端/测试/文档任务，全部通过模块审查。"
+
+**标记模块审查通过**：
+```
+Bash({ command: "~/.claude/bin/ccg-workflow review 3 passed", timeout: 5000 })
+```
 
 ---
 
 ### Stage 4: Codex + Claude 最终联合审查
+
+**⛔ 强制检查点**：
+```
+Bash({ command: "~/.claude/bin/ccg-workflow check || exit 1", timeout: 5000 })
+```
+
+**更新工作流状态**：
+```
+Bash({ command: "~/.claude/bin/ccg-workflow stage 4 in_progress", timeout: 5000 })
+```
 
 **更新 Monitor 阶段**：
 ```
@@ -384,9 +484,27 @@ CODEX_EOF
 - 补充架构/设计层面问题
 - 生成最终审查报告
 
+**审查完成后**：
+- 如果有 Critical/Major → 标记为 pending_review，进入 Stage 5 迭代修复
+- 如果全部通过 → 标记为 reviewed，跳过 Stage 5
+
+```
+Bash({ command: "~/.claude/bin/ccg-workflow stage 4 pending_review", timeout: 5000 })
+```
+
 ---
 
 ### Stage 5: 迭代修复直到满意
+
+**⛔ 强制检查点**：
+```
+Bash({ command: "~/.claude/bin/ccg-workflow check || exit 1", timeout: 5000 })
+```
+
+**更新工作流状态**：
+```
+Bash({ command: "~/.claude/bin/ccg-workflow stage 5 in_progress", timeout: 5000 })
+```
 
 **更新 Monitor 阶段**：
 ```
@@ -410,18 +528,33 @@ IF iteration >= 5:
 
 **满意标准**：Critical=0 且 Major=0
 
+**迭代修复完成后**：
+```
+Bash({ command: "~/.claude/bin/ccg-workflow stage 4 pending_review && ~/.claude/bin/ccg-workflow review 4 passed && ~/.claude/bin/ccg-workflow stage 5 pending_review && ~/.claude/bin/ccg-workflow review 5 passed", timeout: 5000 })
+```
+
 ---
 
 ### Stage 6: 整合交付
+
+**⛔ 强制检查点**：
+```
+Bash({ command: "~/.claude/bin/ccg-workflow check || exit 1", timeout: 5000 })
+```
+
+**更新工作流状态**：
+```
+Bash({ command: "~/.claude/bin/ccg-workflow stage 6 in_progress", timeout: 5000 })
+```
 
 审查全部通过后：
 
 1. 整合所有变更
 2. 运行测试（如有）
-3. **更新 Monitor 任务状态为完成**：
+3. **更新 Monitor 和工作流状态为完成**：
    ```
    Bash({
-     command: "~/.claude/bin/ccg-report done '$CCG_TASK_ID' 'CCG Major 完成: {feature_name}'",
+     command: "~/.claude/bin/ccg-report done '$CCG_TASK_ID' 'CCG Major 完成: {feature_name}' && ~/.claude/bin/ccg-workflow stage 6 completed",
      timeout: 5000,
      description: "报告 CCG 完成到 Monitor"
    })
