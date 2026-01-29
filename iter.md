@@ -54,15 +54,25 @@ $ARGUMENTS
 
 ## 执行流程
 
-### Step 0: 向 Monitor 报告 (可选)
+### Step 0: 向 Monitor 报告
 
-如果 `CCG_MONITOR_URL` 环境变量已设置，向 Monitor 报告迭代启动：
+**向 Monitor 报告迭代启动**：
 
 ```
 Bash({
-  command: "[ -n \"$CCG_MONITOR_URL\" ] && curl -s -X POST $CCG_MONITOR_URL/api/tasks -H 'Content-Type: application/json' -d '{\"cli_type\":\"claude\",\"prompt\":\"CCG Iter: '$ARGUMENTS'\",\"workdir\":\"'\"$PWD\"'\"}' || true",
+  command: "CCG_TASK_ID=$(~/.claude/bin/ccg-report start 'CCG Iter: $ARGUMENTS') && echo \"CCG_TASK_ID=$CCG_TASK_ID\"",
   timeout: 5000,
   description: "报告 CCG Iter 到 Monitor"
+})
+```
+
+**保存返回的 CCG_TASK_ID，完成后需要用它来更新状态。**
+
+```
+Bash({
+  command: "~/.claude/bin/ccg-report running '$CCG_TASK_ID'",
+  timeout: 5000,
+  description: "更新状态为运行中"
 })
 ```
 
@@ -154,6 +164,14 @@ codeagent-wrapper --backend codex --lite -p "
 
 - 运行相关测试 (如有)
 - 确认修改生效
+- **更新 Monitor 任务状态为完成**：
+  ```
+  Bash({
+    command: "~/.claude/bin/ccg-report done '$CCG_TASK_ID' 'CCG Iter 完成: $ARGUMENTS'",
+    timeout: 5000,
+    description: "报告 CCG Iter 完成到 Monitor"
+  })
+  ```
 - 报告完成
 
 ---

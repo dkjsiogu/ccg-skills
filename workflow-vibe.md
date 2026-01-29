@@ -36,8 +36,8 @@ description: 'CCG + Vibedev 整合工作流：结构化需求 → Codex审核文
 | 角色 | 职责 |
 |------|------|
 | **Vibedev MCP** | 结构化需求、设计、任务 |
-| **Claude** | 编排 + 后端开发 + 综合评估 + 代码修复 |
-| **Copilot** | 前端开发（代码生成，不参与审查） |
+| **Claude** | 编排 + 后端开发 + 执行代理（代执行命令传给其他CLI）+ 综合评估 + 代码修复 |
+| **Copilot** | 前端开发 + 测试生成 + 文档生成（代码生成，不参与审查） |
 | **Codex** | 审核文档（需求/设计/任务）+ 审核代码（主审） |
 
 ---
@@ -54,9 +54,19 @@ description: 'CCG + Vibedev 整合工作流：结构化需求 → Codex审核文
 
 ```
 Bash({
-  command: "curl -s -X POST http://127.0.0.1:3721/api/tasks -H 'Content-Type: application/json' -d '{\"cli_type\":\"claude\",\"prompt\":\"CCG Workflow-Vibe 启动\",\"workdir\":\"'\"$PWD\"'\"}'",
+  command: "CCG_TASK_ID=$(~/.claude/bin/ccg-report start 'CCG Workflow-Vibe: $ARGUMENTS') && echo \"CCG_TASK_ID=$CCG_TASK_ID\"",
   timeout: 5000,
   description: "报告 CCG 启动到 Monitor"
+})
+```
+
+**保存返回的 CCG_TASK_ID，后续阶段需要用它来更新状态。**
+
+```
+Bash({
+  command: "~/.claude/bin/ccg-report running '$CCG_TASK_ID'",
+  timeout: 5000,
+  description: "更新状态为运行中"
 })
 ```
 
@@ -73,6 +83,11 @@ mcp__vibedev-specs__vibedev_specs_workflow_start()
 ### 🎯 阶段 1：目标确认 (Goal)
 
 `[模式：目标]`
+
+**更新 Monitor 阶段**：
+```
+Bash({ command: "~/.claude/bin/ccg-report stage '$CCG_TASK_ID' '阶段 1: 目标确认'", timeout: 5000 })
+```
 
 1. 与用户明确功能目标
 2. 生成 feature_name（如 `user-auth`）
@@ -91,6 +106,11 @@ mcp__vibedev-specs__vibedev_specs_goal_confirmed({
 ### 📋 阶段 2：需求收集 (Requirements) + Codex 审核
 
 `[模式：需求]`
+
+**更新 Monitor 阶段**：
+```
+Bash({ command: "~/.claude/bin/ccg-report stage '$CCG_TASK_ID' '阶段 2: 需求收集'", timeout: 5000 })
+```
 
 1. 启动需求收集：
 
@@ -148,6 +168,11 @@ mcp__vibedev-specs__vibedev_specs_requirements_confirmed({
 
 `[模式：设计]`
 
+**更新 Monitor 阶段**：
+```
+Bash({ command: "~/.claude/bin/ccg-report stage '$CCG_TASK_ID' '阶段 3: 技术设计'", timeout: 5000 })
+```
+
 1. 启动设计阶段：
 
 ```
@@ -203,6 +228,11 @@ mcp__vibedev-specs__vibedev_specs_design_confirmed({
 ### 📝 阶段 4：任务规划 (Tasks) + Codex 审核
 
 `[模式：任务]`
+
+**更新 Monitor 阶段**：
+```
+Bash({ command: "~/.claude/bin/ccg-report stage '$CCG_TASK_ID' '阶段 4: 任务规划'", timeout: 5000 })
+```
 
 1. 启动任务规划：
 
@@ -260,6 +290,11 @@ mcp__vibedev-specs__vibedev_specs_tasks_confirmed({
 
 `[模式：执行]`
 
+**更新 Monitor 阶段**：
+```
+Bash({ command: "~/.claude/bin/ccg-report stage '$CCG_TASK_ID' '阶段 5: 逐模块执行'", timeout: 5000 })
+```
+
 **核心原则**：每完成一个模块/任务，立即进行 Codex 审查，修复问题后再继续下一个模块。
 
 1. 启动执行阶段：
@@ -301,6 +336,84 @@ FOR each task in task_list:
             继续下一个任务
 ```
 
+**CC 作为执行代理**：CC 先执行命令收集上下文，再传给 Copilot/Codex。
+**项目级 Prompt**：如果 `.ccg/prompts/` 存在项目级提示词，读取后附加到调用中。
+
+#### 5.1 后端任务 → CC 自己写
+
+CC 直接写后端/逻辑代码，但要：
+- 先用 Grep/Read 分析现有代码
+- 为前端提供清晰接口定义
+
+#### 5.2 前端任务 → 必须调用 Copilot
+
+**CC 先读取相关代码和上下文，然后传给 Copilot**：
+
+```bash
+/home/dkjsiogu/.claude/bin/codeagent-wrapper --backend gemini --lite - "$PWD" <<'COPILOT_EOF'
+## 项目上下文
+（如有 .ccg/prompts/copilot.md，读取并粘贴在这里）
+
+## 前端任务
+
+### 任务描述
+（这里填写具体的前端任务）
+
+### 相关代码上下文
+（CC 预先读取的相关代码，粘贴在这里）
+
+### 接口规范
+（后端提供的 API 接口定义）
+
+请生成完整实现。
+COPILOT_EOF
+```
+
+**使用 `run_in_background: true` 和 `timeout: 600000`**
+
+#### 5.3 Copilot 辅助任务（测试/文档）
+
+**除前端开发外，Copilot 还应承担以下任务**：
+
+**测试生成**：CC 读取已完成模块的代码，传给 Copilot 生成测试
+
+```bash
+/home/dkjsiogu/.claude/bin/codeagent-wrapper --backend gemini --lite - "$PWD" <<'COPILOT_EOF'
+## 任务：为以下代码生成单元测试
+
+### 代码
+（CC 预先 Read 的源代码）
+
+### 项目测试规范
+（CC 预先读取的现有测试文件风格）
+
+### 要求
+- 覆盖主要路径和边界条件
+- 保持项目现有测试风格
+- 输出完整可运行的测试代码
+
+OUTPUT: 测试代码
+COPILOT_EOF
+```
+
+**文档生成**：CC 执行命令获取结构，传给 Copilot 生成文档
+
+```bash
+/home/dkjsiogu/.claude/bin/codeagent-wrapper --backend gemini --lite - "$PWD" <<'COPILOT_EOF'
+## 任务：为以下模块生成 API 文档
+
+### 模块结构
+（CC 预先执行 find/grep 获取的文件列表和公开接口）
+
+### 代码摘要
+（CC 预先读取的关键代码片段）
+
+OUTPUT: Markdown 文档
+COPILOT_EOF
+```
+
+#### 5.4 模块完成后 → Codex 审查
+
 3. **模块审查调用**（每个任务完成后）：
 
 ```
@@ -340,6 +453,11 @@ EOF",
 ### 🔍 阶段 6：最终联合审查（Codex + Claude）
 
 `[模式：最终审查]`
+
+**更新 Monitor 阶段**：
+```
+Bash({ command: "~/.claude/bin/ccg-report stage '$CCG_TASK_ID' '阶段 6: 最终审查'", timeout: 5000 })
+```
 
 **所有模块完成后，进行全局联合审查**：
 
@@ -396,6 +514,11 @@ EOF",
 
 `[模式：迭代]`
 
+**更新 Monitor 阶段**：
+```
+Bash({ command: "~/.claude/bin/ccg-report stage '$CCG_TASK_ID' '阶段 7: 迭代修复'", timeout: 5000 })
+```
+
 **自动迭代循环，直到 Codex + Claude 都满意**：
 
 ```
@@ -440,6 +563,15 @@ IF no_critical_or_major_issues:
 ### ✅ 阶段 8：交付确认
 
 `[模式：交付]`
+
+**更新 Monitor 任务状态为完成**：
+```
+Bash({
+  command: "~/.claude/bin/ccg-report done '$CCG_TASK_ID' 'CCG Workflow-Vibe 完成: <feature_name>'",
+  timeout: 5000,
+  description: "报告 CCG 完成到 Monitor"
+})
+```
 
 审查通过后，向用户报告：
 

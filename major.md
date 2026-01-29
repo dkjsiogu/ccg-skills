@@ -65,9 +65,19 @@ TaskOutput({ task_id: "<task_id>", block: true, timeout: 600000 })
 
 ```
 Bash({
-  command: "curl -s -X POST http://127.0.0.1:3721/api/tasks -H 'Content-Type: application/json' -d '{\"cli_type\":\"claude\",\"prompt\":\"CCG Major 工作流启动\",\"workdir\":\"'\"$PWD\"'\"}'",
+  command: "CCG_TASK_ID=$(~/.claude/bin/ccg-report start 'CCG Major: $ARGUMENTS') && echo \"CCG_TASK_ID=$CCG_TASK_ID\"",
   timeout: 5000,
   description: "报告 CCG 启动到 Monitor"
+})
+```
+
+**保存返回的 CCG_TASK_ID，后续阶段需要用它来更新状态。**
+
+```
+Bash({
+  command: "~/.claude/bin/ccg-report running '$CCG_TASK_ID'",
+  timeout: 5000,
+  description: "更新状态为运行中"
 })
 ```
 
@@ -107,6 +117,11 @@ use_global_defaults = true
 ---
 
 ### Stage 1: Vibedev 需求收集 + 设计 + 任务分解 (CC 主导 + Codex 审核)
+
+**更新 Monitor 阶段**：
+```
+Bash({ command: "~/.claude/bin/ccg-report stage '$CCG_TASK_ID' 'Stage 1: 需求/设计/任务分解'", timeout: 5000 })
+```
 
 CC 亲自执行，使用 MCP 工具。**每个文档阶段完成后必须经过 Codex 审核。**
 
@@ -158,6 +173,11 @@ Bash({
 
 ### Stage 2: Codex 最终审核任务列表
 
+**更新 Monitor 阶段**：
+```
+Bash({ command: "~/.claude/bin/ccg-report stage '$CCG_TASK_ID' 'Stage 2: Codex 审核任务'", timeout: 5000 })
+```
+
 **Stage 1 各阶段已逐步审核，此处做最终综合审核。你必须执行以下 Bash 命令，不能跳过：**
 
 ```bash
@@ -199,6 +219,14 @@ CODEX_EOF
 
 ### Stage 3: 逐模块执行 + 模块级审查
 
+**更新 Monitor 阶段**：
+```
+Bash({ command: "~/.claude/bin/ccg-report stage '$CCG_TASK_ID' 'Stage 3: 逐模块执行'", timeout: 5000 })
+```
+
+**CC 作为执行代理**：CC 先执行命令收集上下文，再传给 Copilot/Codex。
+**项目级 Prompt**：如果 `.ccg/prompts/` 存在项目级提示词，读取后附加到调用中。
+
 #### 3.1 后端任务 → CC 自己写
 
 CC 直接写后端/逻辑代码，但要：
@@ -207,8 +235,13 @@ CC 直接写后端/逻辑代码，但要：
 
 #### 3.2 前端任务 → 必须调用 Copilot
 
+**CC 先读取相关代码和上下文，然后传给 Copilot**：
+
 ```bash
 /home/dkjsiogu/.claude/bin/codeagent-wrapper --backend gemini --lite - "$PWD" <<'COPILOT_EOF'
+## 项目上下文
+（如有 .ccg/prompts/copilot.md，读取并粘贴在这里）
+
 ## 前端任务
 
 ### 任务描述
@@ -226,12 +259,56 @@ COPILOT_EOF
 
 **使用 `run_in_background: true` 和 `timeout: 600000`**
 
-#### 3.3 模块完成后 → Codex 审查（每个模块）
+#### 3.3 Copilot 辅助任务（测试/文档）
+
+**除前端开发外，Copilot 还应承担以下任务**：
+
+**测试生成**：CC 读取已完成模块的代码，传给 Copilot 生成测试
+
+```bash
+/home/dkjsiogu/.claude/bin/codeagent-wrapper --backend gemini --lite - "$PWD" <<'COPILOT_EOF'
+## 任务：为以下代码生成单元测试
+
+### 代码
+（CC 预先 Read 的源代码）
+
+### 项目测试规范
+（CC 预先读取的现有测试文件风格）
+
+### 要求
+- 覆盖主要路径和边界条件
+- 保持项目现有测试风格
+- 输出完整可运行的测试代码
+
+OUTPUT: 测试代码
+COPILOT_EOF
+```
+
+**文档生成**：CC 执行命令获取结构，传给 Copilot 生成文档
+
+```bash
+/home/dkjsiogu/.claude/bin/codeagent-wrapper --backend gemini --lite - "$PWD" <<'COPILOT_EOF'
+## 任务：为以下模块生成 API 文档
+
+### 模块结构
+（CC 预先执行 find/grep 获取的文件列表和公开接口）
+
+### 代码摘要
+（CC 预先读取的关键代码片段）
+
+OUTPUT: Markdown 文档
+COPILOT_EOF
+```
+
+#### 3.4 模块完成后 → Codex 审查（每个模块）
 
 **每完成一个模块/任务，立即调用 Codex 审查**：
 
 ```bash
 /home/dkjsiogu/.claude/bin/codeagent-wrapper --backend codex --lite - "$PWD" <<'CODEX_EOF'
+## 项目上下文
+（如有 .ccg/prompts/codex.md，读取并粘贴在这里）
+
 ## 模块审查: <task_name>
 
 ### 代码变更
@@ -254,18 +331,24 @@ CODEX_EOF
 - 有 Critical/Major → Claude 修复 → 重新提交 Codex 审查
 - 只有 Minor 或无问题 → 继续下一模块
 
-#### 3.4 并行优化
+#### 3.5 并行优化
 
 后端和前端无依赖时可并行：
 - CC 开始写后端
 - 同时 `run_in_background: true` 让 Copilot 写前端
-- 两者都完成后各自审查
+- 同时 Copilot 生成已完成模块的测试
+- 完成后各自审查
 
-**完成后向用户报告**: "Stage 3 完成，CC 完成 X 个后端任务，Copilot 完成 Y 个前端任务，全部通过模块审查。"
+**完成后向用户报告**: "Stage 3 完成，CC 完成 X 个后端任务，Copilot 完成 Y 个前端/测试/文档任务，全部通过模块审查。"
 
 ---
 
 ### Stage 4: Codex + Claude 最终联合审查
+
+**更新 Monitor 阶段**：
+```
+Bash({ command: "~/.claude/bin/ccg-report stage '$CCG_TASK_ID' 'Stage 4: 最终联合审查'", timeout: 5000 })
+```
 
 **所有模块完成后，进行全局审查**：
 
@@ -305,6 +388,11 @@ CODEX_EOF
 
 ### Stage 5: 迭代修复直到满意
 
+**更新 Monitor 阶段**：
+```
+Bash({ command: "~/.claude/bin/ccg-report stage '$CCG_TASK_ID' 'Stage 5: 迭代修复'", timeout: 5000 })
+```
+
 **自动迭代循环**：
 
 ```
@@ -333,7 +421,7 @@ IF iteration >= 5:
 3. **更新 Monitor 任务状态为完成**：
    ```
    Bash({
-     command: "curl -s -X PATCH http://127.0.0.1:3721/api/tasks/<claude_task_id> -H 'Content-Type: application/json' -d '{\"status\":\"completed\",\"output\":\"CCG Major 完成\"}'",
+     command: "~/.claude/bin/ccg-report done '$CCG_TASK_ID' 'CCG Major 完成: {feature_name}'",
      timeout: 5000,
      description: "报告 CCG 完成到 Monitor"
    })
