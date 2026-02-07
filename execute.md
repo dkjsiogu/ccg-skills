@@ -12,92 +12,22 @@ $ARGUMENTS
 
 - **语言协议**：与工具/模型交互用**英语**，与用户交互用**中文**
 - **代码主权**：外部模型对文件系统**零写入权限**，所有修改由 Claude 执行
-- **脏原型重构**：将 Codex/Copilot 的 Unified Diff 视为"脏原型"，必须重构为生产级代码
+- **审查后应用**：Claude 审查 Codex/Gemini 的 Unified Diff，高质量直接应用，有问题按需修正
 - **止损机制**：当前阶段输出通过验证前，不进入下一阶段
 - **前置条件**：仅在用户对 `/ccg:plan` 输出明确回复 "Y" 后执行（如缺失，必须先二次确认）
 
 ---
 
-## 多模型调用规范
+## Call Spec
 
-**调用语法**（并行用 `run_in_background: true`）：
+**调用规范详见 `~/.claude/.ccg/docs/callspec.md`**（语法、超时、会话复用、角色提示词表）。
 
-```
-# 复用会话调用（推荐）- 原型生成（Implementation Prototype）
-Bash({
-  command: "/home/dkjsiogu/.claude/bin/codeagent-wrapper --backend <codex|copilot> resume <SESSION_ID> - \"$PWD\" <<'EOF'
-ROLE_FILE: <角色提示词路径>
-<TASK>
-需求：<任务描述>
-上下文：<计划内容 + 目标文件>
-</TASK>
-OUTPUT: Unified Diff Patch ONLY. Strictly prohibit any actual modifications.
-EOF",
-  run_in_background: true,
-  timeout: 3600000,
-  description: "简短描述"
-})
+**本命令特有角色**：
 
-# 新会话调用 - 原型生成（Implementation Prototype）
-Bash({
-  command: "/home/dkjsiogu/.claude/bin/codeagent-wrapper --backend <codex|copilot> - \"$PWD\" <<'EOF'
-ROLE_FILE: <角色提示词路径>
-<TASK>
-需求：<任务描述>
-上下文：<计划内容 + 目标文件>
-</TASK>
-OUTPUT: Unified Diff Patch ONLY. Strictly prohibit any actual modifications.
-EOF",
-  run_in_background: true,
-  timeout: 3600000,
-  description: "简短描述"
-})
-```
-
-**审计调用语法**（Code Review / Audit）：
-
-```
-Bash({
-  command: "/home/dkjsiogu/.claude/bin/codeagent-wrapper --backend <codex|copilot> resume <SESSION_ID> - \"$PWD\" <<'EOF'
-ROLE_FILE: <角色提示词路径>
-<TASK>
-Scope: Audit the final code changes.
-Inputs:
-- The applied patch (git diff / final unified diff)
-- The touched files (relevant excerpts if needed)
-Constraints:
-- Do NOT modify any files.
-- Do NOT output tool commands that assume filesystem access.
-</TASK>
-OUTPUT:
-1) A prioritized list of issues (severity, file, rationale)
-2) Concrete fixes; if code changes are needed, include a Unified Diff Patch in a fenced code block.
-EOF",
-  run_in_background: true,
-  timeout: 3600000,
-  description: "简短描述"
-})
-```
-
-**角色提示词**：
-
-| 阶段 | Codex | Copilot |
+| 阶段 | Codex | Gemini |
 |------|-------|--------|
-| 实施 | `/home/dkjsiogu/.claude/.ccg/prompts/codex/architect.md` | `/home/dkjsiogu/.claude/.ccg/prompts/copilot/frontend.md` |
-| 审查 | `/home/dkjsiogu/.claude/.ccg/prompts/codex/reviewer.md` | （审查统一由 Codex 执行） |
-
-**会话复用**：如果 `/ccg:plan` 提供了 SESSION_ID，使用 `resume <SESSION_ID>` 复用上下文。
-
-**等待后台任务**（最大超时 600000ms = 10 分钟）：
-
-```
-TaskOutput({ task_id: "<task_id>", block: true, timeout: 600000 })
-```
-
-**重要**：
-- 必须指定 `timeout: 600000`，否则默认只有 30 秒会导致提前超时
-- 若 10 分钟后仍未完成，继续用 `TaskOutput` 轮询，**绝对不要 Kill 进程**
-- 若因等待时间过长跳过了等待，**必须调用 `AskUserQuestion` 询问用户选择继续等待还是 Kill Task**
+| 实施 | `~/.claude/.ccg/prompts/codex/architect.md` | `~/.claude/.ccg/prompts/gemini/frontend.md` |
+| 审查 | `~/.claude/.ccg/prompts/codex/reviewer.md` | `~/.claude/.ccg/prompts/gemini/reviewer.md` |
 
 ---
 
@@ -125,9 +55,9 @@ TaskOutput({ task_id: "<task_id>", block: true, timeout: 600000 })
 
    | 任务类型 | 判断依据 | 路由 |
    |----------|----------|------|
-   | **前端** | 页面、组件、UI、样式、布局 | Copilot |
+   | **前端** | 页面、组件、UI、样式、布局 | Gemini |
    | **后端** | API、接口、数据库、逻辑、算法 | Codex |
-   | **全栈** | 同时包含前后端 | Codex ∥ Copilot 并行 |
+   | **全栈** | 同时包含前后端 | Codex ∥ Gemini 并行 |
 
 ---
 
@@ -165,20 +95,20 @@ mcp__ace-tool__search_context({
 
 **根据任务类型路由**：
 
-#### Route A: 前端/UI/样式 → Copilot
+#### Route A: 前端/UI/样式 → Gemini
 
 **限制**：上下文 < 32k tokens
 
-1. 调用 Copilot（使用 `/home/dkjsiogu/.claude/.ccg/prompts/copilot/frontend.md`）
+1. 调用 Gemini（使用 `~/.claude/.ccg/prompts/gemini/frontend.md`）
 2. 输入：计划内容 + 检索到的上下文 + 目标文件
 3. OUTPUT: `Unified Diff Patch ONLY. Strictly prohibit any actual modifications.`
-4. **Copilot 是前端设计的权威，其 CSS/React/Vue 原型为最终视觉基准**
-5. ⚠️ **警告**：忽略 Copilot 对后端逻辑的建议
+4. **Gemini 是前端设计的权威，其 CSS/React/Vue 原型为最终视觉基准**
+5. ⚠️ **警告**：忽略 Gemini 对后端逻辑的建议
 6. 若计划包含 `GEMINI_SESSION`：优先 `resume <GEMINI_SESSION>`
 
 #### Route B: 后端/逻辑/算法 → Codex
 
-1. 调用 Codex（使用 `/home/dkjsiogu/.claude/.ccg/prompts/codex/architect.md`）
+1. 调用 Codex（使用 `~/.claude/.ccg/prompts/codex/architect.md`）
 2. 输入：计划内容 + 检索到的上下文 + 目标文件
 3. OUTPUT: `Unified Diff Patch ONLY. Strictly prohibit any actual modifications.`
 4. **Codex 是后端逻辑的权威，利用其逻辑运算与 Debug 能力**
@@ -187,12 +117,12 @@ mcp__ace-tool__search_context({
 #### Route C: 全栈 → 并行调用
 
 1. **并行调用**（`run_in_background: true`）：
-   - Copilot：处理前端部分
+   - Gemini：处理前端部分
    - Codex：处理后端部分
 2. 用 `TaskOutput` 等待两个模型的完整结果
 3. 各自使用计划中对应的 `SESSION_ID` 进行 `resume`（若缺失则创建新会话）
 
-**务必遵循上方 `多模型调用规范` 的 `重要` 指示**
+**务必遵循 Call Spec 的等待规则**
 
 ---
 
@@ -200,30 +130,25 @@ mcp__ace-tool__search_context({
 
 `[模式：实施]`
 
-**Claude 作为代码主权者执行以下步骤**：
+**Claude 审查并应用外部模型输出**：
 
-1. **读取 Diff**：解析 Codex/Copilot 返回的 Unified Diff Patch
+1. **读取 Diff**：解析 Codex/Gemini 返回的 Unified Diff Patch
 
-2. **思维沙箱**：
-   - 模拟应用 Diff 到目标文件
-   - 检查逻辑一致性
-   - 识别潜在冲突或副作用
+2. **快速审查**（替代旧版"全量重构"）：
+   - 检查逻辑一致性、安全性、副作用
+   - **高质量输出**（无明显问题）→ 直接 `git apply` 或等效操作应用
+   - **需要修正**（逻辑错误/风格不一致/安全隐患）→ 针对性修正后应用
+   - 去除明显冗余，确保符合项目代码规范
 
-3. **重构清理**：
-   - 将"脏原型"重构为**高可读、高可维护性、企业发布级代码**
-   - 去除冗余代码
-   - 确保符合项目现有代码规范
-   - **非必要不生成注释与文档**，代码自解释
-
-4. **最小作用域**：
+3. **最小作用域**：
    - 变更仅限需求范围
    - **强制审查**变更是否引入副作用
-   - 做针对性修正
 
-5. **应用变更**：
+4. **应用变更**：
    - 使用 Edit/Write 工具执行实际修改
    - **仅修改必要的代码**，严禁影响用户现有的其他功能
-6. **自检验证**（强烈建议）：
+
+5. **自检验证**（强烈建议）：
    - 运行项目既有的 lint / typecheck / tests（优先最小相关范围）
    - 若失败：优先修复回归，再继续进入 Phase 5
 
@@ -235,24 +160,24 @@ mcp__ace-tool__search_context({
 
 #### 5.1 自动审计
 
-**变更生效后，调用 Codex 进行 Code Review**：
+**变更生效后，强制立即并行调用** Codex 和 Gemini 进行 Code Review：
 
 1. **Codex 审查**（`run_in_background: true`）：
-   - ROLE_FILE: `/home/dkjsiogu/.claude/.ccg/prompts/codex/reviewer.md`
+   - ROLE_FILE: `~/.claude/.ccg/prompts/codex/reviewer.md`
    - 输入：变更的 Diff + 目标文件
-   - 关注：安全性、性能、错误处理、逻辑正确性、设计一致性
+   - 关注：安全性、性能、错误处理、逻辑正确性
 
-用 `TaskOutput` 等待 Codex 审查结果。优先复用 Phase 3 的会话（`resume <SESSION_ID>`）以保持上下文一致。
+2. **Gemini 审查**（`run_in_background: true`）：
+   - ROLE_FILE: `~/.claude/.ccg/prompts/gemini/reviewer.md`
+   - 输入：变更的 Diff + 目标文件
+   - 关注：可访问性、设计一致性、用户体验
 
-2. **Claude 综合评估**：
-   - 验证 Codex 审查结果的准确性
-   - 补充架构/设计层面的问题
-   - 决定是否需要修复
+用 `TaskOutput` 等待两个模型的完整审查结果。优先复用 Phase 3 的会话（`resume <SESSION_ID>`）以保持上下文一致。
 
 #### 5.2 整合修复
 
-1. 综合 Codex + Claude 的审查意见
-2. Codex 主审代码质量，Claude 把控架构设计
+1. 综合 Codex + Gemini 的审查意见
+2. 按信任规则权衡：后端以 Codex 为准，前端以 Gemini 为准
 3. 执行必要的修复
 4. 修复后按需重复 Phase 5.1（直到风险可接受）
 
@@ -270,7 +195,7 @@ mcp__ace-tool__search_context({
 
 ### 审计结果
 - Codex：<通过/发现 N 个问题>
-- Copilot：<通过/发现 N 个问题>
+- Gemini：<通过/发现 N 个问题>
 
 ### 后续建议
 1. [ ] <建议的测试步骤>
@@ -282,10 +207,10 @@ mcp__ace-tool__search_context({
 ## 关键规则
 
 1. **代码主权** – 所有文件修改由 Claude 执行，外部模型零写入权限
-2. **脏原型重构** – Codex/Copilot 的输出视为草稿，必须重构
-3. **信任规则** – 后端以 Codex 为准，前端以 Copilot 为准
+2. **审查后应用** – Codex/Gemini 输出经 Claude 审查，高质量直接用，有问题按需修正
+3. **信任规则** – 后端以 Codex 为准，前端以 Gemini 为准
 4. **最小变更** – 仅修改必要的代码，不引入副作用
-5. **强制审计** – 变更后必须进行 Codex 审查 + Claude 综合评估
+5. **强制审计** – 变更后必须进行多模型 Code Review
 
 ---
 

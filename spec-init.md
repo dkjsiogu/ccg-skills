@@ -19,42 +19,55 @@ description: '初始化 OpenSpec (OPSX) 环境 + 验证多模型 MCP 工具'
    - Inform user which OS was detected.
 
 2. **Check and Install OpenSpec (OPSX)**
-   - Verify if OPSX commands are available: `/opsx:version`
-   - If not installed or not found:
+   - **IMPORTANT**: OpenSpec CLI command is `openspec`, NOT `opsx`
+   - Verify if OpenSpec is available:
+     ```bash
+     npx @fission-ai/openspec --version
+     ```
+   - If not found, install globally:
      ```bash
      npm install -g @fission-ai/openspec@latest
      ```
-   - **Path Verification**:
-     - If `/opsx:version` command is not found after installation:
-       1. Ensure Claude Code commands are properly loaded
-       2. Restart Claude Code session if needed
-       3. Check if OPSX skills are installed in `.claude/skills/`
-   - Confirm installation success by running `/opsx:version` again.
+   - After installation, verify again:
+     ```bash
+     openspec --version
+     ```
+   - If `openspec` command not found after global install, use `npx`:
+     ```bash
+     npx @fission-ai/openspec --version
+     ```
+   - **Note**: Always use `openspec` (not `opsx`) for CLI commands.
 
 3. **Initialize OPSX for Current Project**
-   - Run:
+   - Check if already initialized:
      ```bash
-     /opsx:init --tools claude
+     ls -la openspec/ .claude/skills/openspec-* 2>/dev/null || echo "Not initialized"
      ```
-   - Verify `openspec/` directory structure is created.
-   - Verify `.claude/skills/` contains `opsx-*` skills.
+   - If not initialized, run:
+     ```bash
+     npx @fission-ai/openspec init --tools claude
+     ```
+   - Verify initialization:
+     - Check `openspec/` directory exists
+     - Check `.claude/skills/` contains `openspec-*` skills
+     - Check `.claude/commands/opsx/` contains OPSX commands
    - Report any errors with remediation steps.
 
 4. **Validate Multi-Model MCP Tools**
-   - Check `codeagent-wrapper` availability: `/home/dkjsiogu/.claude/bin/codeagent-wrapper --version`
+   - Check `codeagent-wrapper` availability: `~/.claude/bin/codeagent-wrapper --version`
    - Test Codex backend:
      ```bash
-     /home/dkjsiogu/.claude/bin/codeagent-wrapper --backend codex - "$PWD" <<< "echo test"
+     ~/.claude/bin/codeagent-wrapper --backend codex - "$PWD" <<< "echo test"
      ```
-   - Test Copilot backend:
+   - Test Gemini backend:
      ```bash
-     /home/dkjsiogu/.claude/bin/codeagent-wrapper --backend gemini - "$PWD" <<< "echo test"
+     ~/.claude/bin/codeagent-wrapper --backend gemini --gemini-model gemini-3-pro-preview - "$PWD" <<< "echo test"
      ```
    - For each unavailable tool, display warning with installation instructions.
 
 5. **Validate Context Retrieval MCP** (Optional)
    - **Check Active Tool**: Is `mcp__ace-tool__search_context` available in the current session?
-   - **Check Configuration**: If tool is missing, check `/home/dkjsiogu/.claude.json` (or `%APPDATA%\Claude\claude.json` on Windows) for `"ace-tool"` or `"ace-tool-rs"` in `mcpServers`.
+   - **Check Configuration**: If tool is missing, check `~/.claude.json` (or `%APPDATA%\Claude\claude.json` on Windows) for `"ace-tool"` or `"ace-tool-rs"` in `mcpServers`.
    - **Diagnosis**:
      - If tool available: Mark as "✓ Active".
      - If config exists but tool missing: Mark as "⚠️ Configured but inactive (Try restarting Claude)".
@@ -71,7 +84,7 @@ description: '初始化 OpenSpec (OPSX) 环境 + 验证多模型 MCP 工具'
    OPSX Skills               ✓/✗
    codeagent-wrapper         ✓/✗
    Codex backend             ✓/✗
-   Copilot backend            ✓/✗
+   Gemini backend            ✓/✗
    ace-tool MCP              ✓/✗ (optional)
    ```
 
@@ -84,8 +97,9 @@ description: '初始化 OpenSpec (OPSX) 环境 + 验证多模型 MCP 工具'
    - Code Review: `/ccg:spec-review` (Independent dual-model review)
 
 **Reference**
-- OpenSpec (OPSX) CLI: `/opsx:help`
+- OpenSpec (OPSX) CLI: `npx @fission-ai/openspec --help`
+- OPSX Commands: `/opsx:new`, `/opsx:continue`, `/opsx:apply`, etc.
 - CCG Workflow: `npx ccg-workflow`
-- Codex/Copilot MCP: Bundled with codeagent-wrapper
+- Codex/Gemini MCP: Bundled with codeagent-wrapper
 - Node.js >= 18.x required for OpenSpec
 <!-- CCG:SPEC:INIT:END -->

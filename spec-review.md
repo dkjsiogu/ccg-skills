@@ -1,61 +1,77 @@
 ---
-description: 'Codex 审查 + Claude 综合（独立工具，随时可用）'
+description: '双模型交叉审查（独立工具，随时可用）'
 ---
 <!-- CCG:SPEC:REVIEW:START -->
 **Core Philosophy**
-- Codex 深度代码审查 + Claude 架构综合评估
-- Critical findings MUST be addressed before proceeding.
+- Dual-model cross-validation catches blind spots single-model review would miss.
+- Critical findings SHOULD be addressed before proceeding.
 - Review validates implementation against spec constraints and code quality.
-- This is an independent review tool—can be used anytime.
+- This is an independent review tool—can be used anytime, not tied to archive workflow.
 
 **Guardrails**
-- **MANDATORY**: Codex must complete review, Claude synthesizes and supplements.
+- **MANDATORY**: Both Codex AND Gemini must complete review before synthesis.
 - Review scope is strictly limited to the proposal's changes—no scope creep.
+- Refer to `openspec/AGENTS.md` for spec conventions if reviewing OpenSpec proposals.
 
 **Steps**
 1. **Select Proposal**
-   - Run `/opsx:list` to display Active Changes.
+   - Run `openspec list --json` to display Active Changes.
    - Confirm with user which proposal ID to review.
-   - Run `/opsx:show <proposal_id>` to load spec and tasks.
+   - Run `openspec status --change "<proposal_id>" --json` to load spec and tasks.
 
 2. **Collect Implementation Artifacts**
    - Identify all files modified by this proposal.
-   - Use `git diff` or `/opsx:diff <proposal_id>` to get change summary.
-   - Load relevant spec constraints from `openspec/changes/<id>/specs/`.
+   - Use `git diff` to get change summary.
+   - Load relevant spec constraints and PBT properties from `openspec/changes/<id>/specs/`.
 
-3. **Codex Code Review**
-   Launch Codex review with `run_in_background: true`:
+3. **Multi-Model Review (PARALLEL)**
+   - **CRITICAL**: You MUST launch BOTH Codex AND Gemini in a SINGLE message with TWO Bash tool calls.
+   - **DO NOT** call one model first and wait. Launch BOTH simultaneously with `run_in_background: true`.
 
+   **Step 3.1**: In ONE message, make TWO parallel Bash calls:
+
+   **FIRST Bash call (Codex)**:
    ```
    Bash({
-     command: "/home/dkjsiogu/.claude/bin/codeagent-wrapper --backend codex - \"$PWD\" <<'EOF'\nReview proposal <proposal_id> implementation:\n\n## Review Dimensions\n1. **Spec Compliance**: Verify ALL constraints from spec are satisfied\n2. **Logic Correctness**: Edge cases, error handling, algorithm correctness\n3. **Security**: Injection vulnerabilities, auth checks, XSS, CSRF\n4. **Pattern Consistency**: Naming conventions, code style, project patterns\n5. **Maintainability**: Readability, complexity, documentation adequacy\n6. **Regression Risk**: Interface compatibility, type safety, breaking changes\n\n## Output Format (JSON)\n{\n  \"findings\": [\n    {\n      \"severity\": \"Critical|Warning|Info\",\n      \"dimension\": \"spec|logic|security|pattern|maintainability|regression\",\n      \"file\": \"path/to/file\",\n      \"line\": 42,\n      \"description\": \"What is wrong\",\n      \"fix_suggestion\": \"How to fix\"\n    }\n  ],\n  \"passed_checks\": [\"List of verified aspects\"],\n  \"summary\": \"Overall assessment\"\n}\nEOF",
+     command: "~/.claude/bin/codeagent-wrapper --backend codex - \"$PWD\" <<'EOF'\nReview proposal <proposal_id> implementation:\n\n## Codex Review Dimensions\n1. **Spec Compliance**: Verify ALL constraints from spec are satisfied\n2. **PBT Properties**: Check invariants, idempotency, bounds are correctly implemented\n3. **Logic Correctness**: Edge cases, error handling, algorithm correctness\n4. **Backend Security**: Injection vulnerabilities, auth checks, input validation\n5. **Regression Risk**: Interface compatibility, type safety, breaking changes\n\n## Output Format (JSON)\n{\n  \"findings\": [\n    {\n      \"severity\": \"Critical|Warning|Info\",\n      \"dimension\": \"spec_compliance|pbt|logic|security|regression\",\n      \"file\": \"path/to/file.ts\",\n      \"line\": 42,\n      \"description\": \"What is wrong\",\n      \"constraint_violated\": \"Constraint ID from spec (if applicable)\",\n      \"fix_suggestion\": \"How to fix\"\n    }\n  ],\n  \"passed_checks\": [\"List of verified constraints/properties\"],\n  \"summary\": \"Overall assessment\"\n}\nEOF",
      run_in_background: true,
-     timeout: 600000,
-     description: "Codex code review"
+     timeout: 300000,
+     description: "Codex: backend/logic review"
    })
    ```
 
-   Wait for result:
+   **SECOND Bash call (Gemini) - IN THE SAME MESSAGE**:
    ```
-   TaskOutput({ task_id: "<codex_task_id>", block: true, timeout: 600000 })
+   Bash({
+     command: "~/.claude/bin/codeagent-wrapper --backend gemini - \"$PWD\" <<'EOF'\nReview proposal <proposal_id> implementation:\n\n## Gemini Review Dimensions\n1. **Pattern Consistency**: Naming conventions, code style, project patterns\n2. **Maintainability**: Readability, complexity, documentation adequacy\n3. **Integration Risk**: Dependency changes, cross-module impacts\n4. **Frontend Security**: XSS, CSRF, sensitive data exposure\n5. **Spec Alignment**: Implementation matches spec intent (not just letter)\n\n## Output Format (JSON)\n{\n  \"findings\": [\n    {\n      \"severity\": \"Critical|Warning|Info\",\n      \"dimension\": \"patterns|maintainability|integration|security|alignment\",\n      \"file\": \"path/to/file.ts\",\n      \"line\": 42,\n      \"description\": \"What is wrong\",\n      \"spec_reference\": \"Spec section (if applicable)\",\n      \"fix_suggestion\": \"How to fix\"\n    }\n  ],\n  \"passed_checks\": [\"List of verified aspects\"],\n  \"summary\": \"Overall assessment\"\n}\nEOF",
+     run_in_background: true,
+     timeout: 300000,
+     description: "Gemini: patterns/integration review"
+   })
    ```
 
-4. **Claude Synthesis**
-   Based on Codex review:
-   - Verify findings accuracy
-   - Add architecture/design level concerns
-   - Deduplicate and classify by severity:
+   **Step 3.2**: After BOTH Bash calls return task IDs, wait for results with TWO TaskOutput calls:
+   ```
+   TaskOutput({ task_id: "<codex_task_id>", block: true, timeout: 600000 })
+   TaskOutput({ task_id: "<gemini_task_id>", block: true, timeout: 600000 })
+   ```
+
+4. **Synthesize Findings**
+   - Merge findings from both models.
+   - Deduplicate overlapping issues.
+   - Classify by severity:
      * **Critical**: Spec violation, security vulnerability, breaking change → MUST fix
      * **Warning**: Pattern deviation, maintainability concern → SHOULD fix
      * **Info**: Minor improvement suggestion → MAY fix
 
 5. **Present Review Report**
+   - Display findings grouped by severity:
    ```
    ## Review Report: <proposal_id>
 
    ### Critical (X issues) - MUST FIX
    - [ ] [SPEC] file.ts:42 - Constraint X violated: description
-   - [ ] [SEC] api.ts:15 - Injection vulnerability
+   - [ ] [SEC] api.ts:15 - SQL injection vulnerability
 
    ### Warning (Y issues) - SHOULD FIX
    - [ ] [PATTERN] utils.ts:88 - Inconsistent naming convention
@@ -64,8 +80,8 @@ description: 'Codex 审查 + Claude 综合（独立工具，随时可用）'
    - [ ] [MAINT] helper.ts:20 - Consider extracting to separate function
 
    ### Passed Checks
-   - ✅ Security: No critical vulnerabilities found
-   - ✅ Logic: Edge cases handled correctly
+   - ✅ PBT: Idempotency property verified
+   - ✅ Security: No XSS vulnerabilities found
    ```
 
 6. **Decision Gate**
@@ -78,21 +94,27 @@ description: 'Codex 审查 + Claude 综合（独立工具，随时可用）'
      * Ask user: "All critical checks passed. Proceed to archive?"
      * If Warning > 0, recommend addressing before archive.
 
-7. **Iterative Fix Mode**
+7. **Optional: Inline Fix Mode**
    - If user chooses "Fix now" for Critical issues:
-     * Claude directly fixes the code
-     * Re-run Codex review on changed files
-     * Repeat until Critical = 0
+     * Route each fix to appropriate model (backend→Codex, frontend→Gemini).
+     * Apply fix using unified diff patch pattern.
+     * Re-run affected review dimension.
+     * Repeat until Critical = 0.
+
+8. **Context Checkpoint**
+   - Report current context usage.
+   - If approaching 80K tokens, suggest: "Run `/clear` and continue with `/ccg:spec-review` or `/ccg:spec-impl`"
 
 **Exit Criteria**
 Review is complete when:
-- [ ] Codex review completed
-- [ ] Claude synthesis done
+- [ ] Both Codex and Gemini reviews completed
+- [ ] All findings synthesized and classified
 - [ ] Zero Critical issues remain (fixed or user-acknowledged)
 - [ ] User decision captured (archive / return to impl / defer)
 
 **Reference**
-- View proposal: `/opsx:show <id>`
+- View proposal: `openspec status --change "<id>" --json`
 - Check spec constraints: `rg -n "CONSTRAINT:|MUST|INVARIANT:" openspec/changes/<id>/specs/`
-- View implementation diff: `/opsx:diff <id>` or `git diff`
+- View implementation diff: `git diff`
+- Archive (after passing): `/ccg:spec-impl` → Step 10
 <!-- CCG:SPEC:REVIEW:END -->

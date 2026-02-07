@@ -13,7 +13,7 @@ description: '后端专项工作流（研究→构思→计划→执行→优化
 ## 上下文
 
 - 后端任务：$ARGUMENTS
-- Codex 主导，Copilot 辅助参考
+- Codex 主导，Gemini 辅助参考
 - 适用：API 设计、算法实现、数据库优化、业务逻辑
 
 ## 你的角色
@@ -22,56 +22,24 @@ description: '后端专项工作流（研究→构思→计划→执行→优化
 
 **协作模型**：
 - **Codex** – 后端逻辑、算法（**后端权威，可信赖**）
-- **Copilot** – 前端视角（**后端意见仅供参考**）
+- **Gemini** – 前端视角（**后端意见仅供参考**）
 - **Claude (自己)** – 编排、计划、执行、交付
 
 ---
 
-## 多模型调用规范
+## Call Spec
 
-**调用语法**：
+**调用规范详见 `~/.claude/.ccg/docs/callspec.md`**（语法、超时、会话复用）。
 
-```
-# 新会话调用
-Bash({
-  command: "/home/dkjsiogu/.claude/bin/codeagent-wrapper --backend codex - \"$PWD\" <<'EOF'
-ROLE_FILE: <角色提示词路径>
-<TASK>
-需求：<增强后的需求（如未增强则用 $ARGUMENTS）>
-上下文：<前序阶段收集的项目上下文、分析结果等>
-</TASK>
-OUTPUT: 期望输出格式
-EOF",
-  run_in_background: false,
-  timeout: 3600000,
-  description: "简短描述"
-})
-
-# 复用会话调用
-Bash({
-  command: "/home/dkjsiogu/.claude/bin/codeagent-wrapper --backend codex resume <SESSION_ID> - \"$PWD\" <<'EOF'
-ROLE_FILE: <角色提示词路径>
-<TASK>
-需求：<增强后的需求（如未增强则用 $ARGUMENTS）>
-上下文：<前序阶段收集的项目上下文、分析结果等>
-</TASK>
-OUTPUT: 期望输出格式
-EOF",
-  run_in_background: false,
-  timeout: 3600000,
-  description: "简短描述"
-})
-```
-
-**角色提示词**：
+**本命令仅用 Codex**（`--backend codex`），角色提示词：
 
 | 阶段 | Codex |
 |------|-------|
-| 分析 | `/home/dkjsiogu/.claude/.ccg/prompts/codex/analyzer.md` |
-| 规划 | `/home/dkjsiogu/.claude/.ccg/prompts/codex/architect.md` |
-| 审查 | `/home/dkjsiogu/.claude/.ccg/prompts/codex/reviewer.md` |
+| 分析 | `~/.claude/.ccg/prompts/codex/analyzer.md` |
+| 规划 | `~/.claude/.ccg/prompts/codex/architect.md` |
+| 审查 | `~/.claude/.ccg/prompts/codex/reviewer.md` |
 
-**会话复用**：每次调用返回 `SESSION_ID: xxx`，后续阶段用 `resume xxx` 复用上下文。阶段 2 保存 `CODEX_SESSION`，阶段 3 和 5 使用 `resume` 复用。
+**会话复用**：阶段 2 保存 `CODEX_SESSION`，阶段 3 和 5 使用 `resume` 复用。
 
 ---
 
@@ -101,7 +69,7 @@ EOF",
 `[模式：构思]` - Codex 主导分析
 
 **⚠️ 必须调用 Codex**（参照上方调用规范）：
-- ROLE_FILE: `/home/dkjsiogu/.claude/.ccg/prompts/codex/analyzer.md`
+- ROLE_FILE: `~/.claude/.ccg/prompts/codex/analyzer.md`
 - 需求：增强后的需求（如未增强则用 $ARGUMENTS）
 - 上下文：阶段 1 收集的项目上下文
 - OUTPUT: 技术可行性分析、推荐方案（至少 2 个）、风险点评估
@@ -115,7 +83,7 @@ EOF",
 `[模式：计划]` - Codex 主导规划
 
 **⚠️ 必须调用 Codex**（使用 `resume <CODEX_SESSION>` 复用会话）：
-- ROLE_FILE: `/home/dkjsiogu/.claude/.ccg/prompts/codex/architect.md`
+- ROLE_FILE: `~/.claude/.ccg/prompts/codex/architect.md`
 - 需求：用户选择的方案
 - 上下文：阶段 2 的分析结果
 - OUTPUT: 文件结构、函数/类设计、依赖关系
@@ -135,7 +103,7 @@ Claude 综合规划，请求用户批准后存入 `.claude/plan/任务名.md`
 `[模式：优化]` - Codex 主导审查
 
 **⚠️ 必须调用 Codex**（参照上方调用规范）：
-- ROLE_FILE: `/home/dkjsiogu/.claude/.ccg/prompts/codex/reviewer.md`
+- ROLE_FILE: `~/.claude/.ccg/prompts/codex/reviewer.md`
 - 需求：审查以下后端代码变更
 - 上下文：git diff 或代码内容
 - OUTPUT: 安全性、性能、错误处理、API 规范问题列表
@@ -155,6 +123,6 @@ Claude 综合规划，请求用户批准后存入 `.claude/plan/任务名.md`
 ## 关键规则
 
 1. **Codex 后端意见可信赖**
-2. **Copilot 后端意见仅供参考**
+2. **Gemini 后端意见仅供参考**
 3. 外部模型对文件系统**零写入权限**
 4. Claude 负责所有代码写入和文件操作

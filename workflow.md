@@ -1,5 +1,5 @@
 ---
-description: '多模型协作开发工作流（研究→构思→计划→执行→优化→评审），智能路由前端→Copilot、后端→Codex'
+description: '多模型协作开发工作流（研究→构思→计划→执行→优化→评审），智能路由前端→Gemini、后端→Codex'
 ---
 
 # Workflow - 多模型协作开发
@@ -16,7 +16,7 @@ description: '多模型协作开发工作流（研究→构思→计划→执行
 
 - 要开发的任务：$ARGUMENTS
 - 带质量把关的结构化 6 阶段工作流
-- 多模型协作：Codex（后端）+ Copilot（前端）+ Claude（编排）
+- 多模型协作：Codex（后端）+ Gemini（前端）+ Claude（编排）
 - MCP 服务集成（ace-tool）以增强功能
 
 ## 你的角色
@@ -26,69 +26,14 @@ description: '多模型协作开发工作流（研究→构思→计划→执行
 **协作模型**：
 - **ace-tool MCP** – 代码检索 + Prompt 增强
 - **Codex** – 后端逻辑、算法、调试（**后端权威，可信赖**）
-- **Copilot** – 前端 UI/UX、视觉设计（**前端高手，后端意见仅供参考**）
+- **Gemini** – 前端 UI/UX、视觉设计（**前端高手，后端意见仅供参考**）
 - **Claude (自己)** – 编排、计划、执行、交付
 
 ---
 
-## 多模型调用规范
+## Call Spec
 
-**调用语法**（并行用 `run_in_background: true`，串行用 `false`）：
-
-```
-# 新会话调用
-Bash({
-  command: "/home/dkjsiogu/.claude/bin/codeagent-wrapper --backend <codex|copilot> - \"$PWD\" <<'EOF'
-ROLE_FILE: <角色提示词路径>
-<TASK>
-需求：<增强后的需求（如未增强则用 $ARGUMENTS）>
-上下文：<前序阶段收集的项目上下文、分析结果等>
-</TASK>
-OUTPUT: 期望输出格式
-EOF",
-  run_in_background: true,
-  timeout: 3600000,
-  description: "简短描述"
-})
-
-# 复用会话调用
-Bash({
-  command: "/home/dkjsiogu/.claude/bin/codeagent-wrapper --backend <codex|copilot> resume <SESSION_ID> - \"$PWD\" <<'EOF'
-ROLE_FILE: <角色提示词路径>
-<TASK>
-需求：<增强后的需求（如未增强则用 $ARGUMENTS）>
-上下文：<前序阶段收集的项目上下文、分析结果等>
-</TASK>
-OUTPUT: 期望输出格式
-EOF",
-  run_in_background: true,
-  timeout: 3600000,
-  description: "简短描述"
-})
-```
-
-**角色提示词**：
-
-| 阶段 | Codex | Copilot |
-|------|-------|--------|
-| 分析 | `/home/dkjsiogu/.claude/.ccg/prompts/codex/analyzer.md` | `/home/dkjsiogu/.claude/.ccg/prompts/copilot/analyzer.md` |
-| 规划 | `/home/dkjsiogu/.claude/.ccg/prompts/codex/architect.md` | `/home/dkjsiogu/.claude/.ccg/prompts/copilot/architect.md` |
-| 审查 | `/home/dkjsiogu/.claude/.ccg/prompts/codex/reviewer.md` | （审查统一由 Codex 执行） |
-
-**会话复用**：每次调用返回 `SESSION_ID: xxx`，后续阶段用 `resume xxx` 子命令复用上下文（注意：是 `resume`，不是 `--resume`）。
-
-**并行调用**：使用 `run_in_background: true` 启动，用 `TaskOutput` 等待结果。**必须等所有模型返回后才能进入下一阶段**。
-
-**等待后台任务**（使用最大超时 600000ms = 10 分钟）：
-
-```
-TaskOutput({ task_id: "<task_id>", block: true, timeout: 600000 })
-```
-
-**重要**：
-- 必须指定 `timeout: 600000`，否则默认只有 30 秒会导致提前超时。
-如果 10 分钟后仍未完成，继续用 `TaskOutput` 轮询，**绝对不要 Kill 进程**。
-- 若因等待时间过长跳过了等待 TaskOutput 结果，则**必须调用 `AskUserQuestion` 工具询问用户选择继续等待还是 Kill Task。禁止直接 Kill Task。**
+**调用规范详见 `~/.claude/.ccg/docs/callspec.md`**（语法、超时、会话复用、角色提示词表）。
 
 ---
 
@@ -110,11 +55,21 @@ TaskOutput({ task_id: "<task_id>", block: true, timeout: 600000 })
 
 `[模式：研究]` - 理解需求并收集上下文：
 
-1. **Prompt 增强**：调用 `mcp__ace-tool__enhance_prompt`，**用增强结果替代原始 $ARGUMENTS，后续调用 Codex/Copilot 时传入增强后的需求**
+1. **Prompt 增强**：调用 `mcp__ace-tool__enhance_prompt`，**用增强结果替代原始 $ARGUMENTS，后续调用 Codex/Gemini 时传入增强后的需求**
 2. **上下文检索**：调用 `mcp__ace-tool__search_context`
-3. **需求完整性评分**（0-10 分）：
+3. **项目配置**：Read `.ccg/workflow.json`（如存在），加载项目级信任/审查/路由偏好
+4. **需求完整性评分**（0-10 分）：
    - 目标明确性（0-3）、预期结果（0-3）、边界范围（0-2）、约束条件（0-2）
    - ≥7 分：继续 | <7 分：⛔ 停止，提出补充问题
+5. **复杂度判断**（智能降级）：
+
+   | 复杂度 | 判据 | 路由 |
+   |--------|------|------|
+   | **简单** | <50 行变更、单文件、明确需求 | CC 直接执行，跳过多模型 |
+   | **中等** | 50-200 行、2-3 文件 | 单模型辅助（后端→Codex 或 前端→Gemini） |
+   | **复杂** | >200 行、多文件、架构性 | 完整多模型协作流程 |
+
+   简单任务直接跳到阶段 4 执行。
 
 ### 💡 阶段 2：方案构思
 
@@ -122,11 +77,9 @@ TaskOutput({ task_id: "<task_id>", block: true, timeout: 600000 })
 
 **并行调用**（`run_in_background: true`）：
 - Codex：使用分析提示词，输出技术可行性、方案、风险
-- Copilot：使用分析提示词，输出 UI 可行性、方案、体验
+- Gemini：使用分析提示词，输出 UI 可行性、方案、体验
 
 用 `TaskOutput` 等待结果。**📌 保存 SESSION_ID**（`CODEX_SESSION` 和 `GEMINI_SESSION`）。
-
-**务必遵循上方 `多模型调用规范` 的 `重要` 指示**
 
 综合两方分析，输出方案对比（至少 2 个方案），等待用户选择。
 
@@ -136,13 +89,11 @@ TaskOutput({ task_id: "<task_id>", block: true, timeout: 600000 })
 
 **并行调用**（复用会话 `resume <SESSION_ID>`）：
 - Codex：使用规划提示词 + `resume $CODEX_SESSION`，输出后端架构
-- Copilot：使用规划提示词 + `resume $GEMINI_SESSION`，输出前端架构
+- Gemini：使用规划提示词 + `resume $GEMINI_SESSION`，输出前端架构
 
 用 `TaskOutput` 等待结果。
 
-**务必遵循上方 `多模型调用规范` 的 `重要` 指示**
-
-**Claude 综合规划**：采纳 Codex 后端规划 + Copilot 前端规划，用户批准后存入 `.claude/plan/任务名.md`
+**Claude 综合规划**：采纳 Codex 后端规划 + Gemini 前端规划，用户批准后存入 `.claude/plan/任务名.md`
 
 ### ⚡ 阶段 4：实施
 
@@ -158,11 +109,9 @@ TaskOutput({ task_id: "<task_id>", block: true, timeout: 600000 })
 
 **并行调用**：
 - Codex：使用审查提示词，关注安全、性能、错误处理
-- Codex：统一审查代码质量、安全性、设计一致性
+- Gemini：使用审查提示词，关注可访问性、设计一致性
 
 用 `TaskOutput` 等待结果。整合审查意见，用户确认后执行优化。
-
-**务必遵循上方 `多模型调用规范` 的 `重要` 指示**
 
 ### ✅ 阶段 6：质量审查
 

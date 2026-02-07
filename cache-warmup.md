@@ -25,9 +25,9 @@
 - 发送: "你是代码审查专家。接下来会有代码需要审查。回复OK。"
 - 记录 session_id 用于后续复用
 
-### Step 4: Copilot 上下文加载
+### Step 4: Gemini 上下文加载
 
-通过 gemini wrapper 预热 Copilot：
+通过 gemini wrapper 预热 Gemini：
 - 使用 `codeagent-wrapper --backend gemini`
 - 发送: "加载前端开发上下文，准备UI开发任务。回复OK。"
 

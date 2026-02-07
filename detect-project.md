@@ -43,7 +43,7 @@ detected_at = "2026-01-29"
 📁 项目类型: Minecraft Mod (Forge)
 📋 角色分配:
    - Claude: mod-logic, events, commands, api-integration
-   - Copilot: animation, texture-config, model-json, recipes
+   - Gemini: animation, texture-config, model-json, recipes
    - Codex: review, compatibility, performance
 ```
 

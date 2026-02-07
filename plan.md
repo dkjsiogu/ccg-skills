@@ -11,52 +11,18 @@ $ARGUMENTS
 ## 核心协议
 
 - **语言协议**：与工具/模型交互用**英语**，与用户交互用**中文**
-- **强制并行**：Codex/Copilot 调用必须使用 `run_in_background: true`（包含单模型调用，避免阻塞主线程）
+- **强制并行**：Codex/Gemini 调用必须使用 `run_in_background: true`（包含单模型调用，避免阻塞主线程）
 - **代码主权**：外部模型对文件系统**零写入权限**，所有修改由 Claude 执行
 - **止损机制**：当前阶段输出通过验证前，不进入下一阶段
 - **仅规划**：本命令允许读取上下文与写入 `.claude/plan/*` 计划文件，但**禁止修改产品代码**
 
 ---
 
-## 多模型调用规范
+## Call Spec
 
-**调用语法**（并行用 `run_in_background: true`）：
+**调用规范详见 `~/.claude/.ccg/docs/callspec.md`**（语法、超时、会话复用、角色提示词表）。
 
-```
-Bash({
-  command: "/home/dkjsiogu/.claude/bin/codeagent-wrapper --backend <codex|copilot> - \"$PWD\" <<'EOF'
-ROLE_FILE: <角色提示词路径>
-<TASK>
-需求：<增强后的需求>
-上下文：<检索到的项目上下文>
-</TASK>
-OUTPUT: Step-by-step implementation plan with pseudo-code. DO NOT modify any files.
-EOF",
-  run_in_background: true,
-  timeout: 3600000,
-  description: "简短描述"
-})
-```
-
-**角色提示词**：
-
-| 阶段 | Codex | Copilot |
-|------|-------|--------|
-| 分析 | `/home/dkjsiogu/.claude/.ccg/prompts/codex/analyzer.md` | `/home/dkjsiogu/.claude/.ccg/prompts/copilot/analyzer.md` |
-| 规划 | `/home/dkjsiogu/.claude/.ccg/prompts/codex/architect.md` | `/home/dkjsiogu/.claude/.ccg/prompts/copilot/architect.md` |
-
-**会话复用**：每次调用返回 `SESSION_ID: xxx`（通常由 wrapper 输出），**必须保存**以供后续 `/ccg:execute` 使用。
-
-**等待后台任务**（最大超时 600000ms = 10 分钟）：
-
-```
-TaskOutput({ task_id: "<task_id>", block: true, timeout: 600000 })
-```
-
-**重要**：
-- 必须指定 `timeout: 600000`，否则默认只有 30 秒会导致提前超时
-- 若 10 分钟后仍未完成，继续用 `TaskOutput` 轮询，**绝对不要 Kill 进程**
-- 若因等待时间过长跳过了等待，**必须调用 `AskUserQuestion` 询问用户选择继续等待还是 Kill Task**
+**本命令特有**：OUTPUT 固定为 `Step-by-step implementation plan with pseudo-code. DO NOT modify any files.`
 
 ---
 
@@ -67,6 +33,10 @@ TaskOutput({ task_id: "<task_id>", block: true, timeout: 600000 })
 ### 🔍 Phase 1：上下文全量检索
 
 `[模式：研究]`
+
+#### 1.0 项目配置加载
+
+Read `.ccg/workflow.json`（如存在），加载：信任级别、审查策略、模型偏好、历史通过率。
 
 #### 1.1 Prompt 增强（必须首先执行）
 
@@ -114,17 +84,17 @@ mcp__ace-tool__search_context({
 
 #### 2.1 分发输入
 
-**并行调用** Codex 和 Copilot（`run_in_background: true`）：
+**并行调用** Codex 和 Gemini（`run_in_background: true`）：
 
 将**原始需求**（不带预设观点）分发给两个模型：
 
 1. **Codex 后端分析**：
-   - ROLE_FILE: `/home/dkjsiogu/.claude/.ccg/prompts/codex/analyzer.md`
+   - ROLE_FILE: `~/.claude/.ccg/prompts/codex/analyzer.md`
    - 关注：技术可行性、架构影响、性能考量、潜在风险
    - OUTPUT: 多角度解决方案 + 优劣势分析
 
-2. **Copilot 前端分析**：
-   - ROLE_FILE: `/home/dkjsiogu/.claude/.ccg/prompts/copilot/analyzer.md`
+2. **Gemini 前端分析**：
+   - ROLE_FILE: `~/.claude/.ccg/prompts/gemini/analyzer.md`
    - 关注：UI/UX 影响、用户体验、视觉设计
    - OUTPUT: 多角度解决方案 + 优劣势分析
 
@@ -136,7 +106,7 @@ mcp__ace-tool__search_context({
 
 1. **识别一致观点**（强信号）
 2. **识别分歧点**（需权衡）
-3. **互补优势**：后端逻辑以 Codex 为准，前端设计以 Copilot 为准
+3. **互补优势**：后端逻辑以 Codex 为准，前端设计以 Gemini 为准
 4. **逻辑推演**：消除方案中的逻辑漏洞
 
 #### 2.3（可选但推荐）双模型产出“计划草案”
@@ -144,11 +114,11 @@ mcp__ace-tool__search_context({
 为降低 Claude 合成计划的遗漏风险，可并行让两个模型输出“计划草案”（仍然**不允许**修改文件）：
 
 1. **Codex 计划草案**（后端权威）：
-   - ROLE_FILE: `/home/dkjsiogu/.claude/.ccg/prompts/codex/architect.md`
+   - ROLE_FILE: `~/.claude/.ccg/prompts/codex/architect.md`
    - OUTPUT: Step-by-step plan + pseudo-code（重点：数据流/边界条件/错误处理/测试策略）
 
-2. **Copilot 计划草案**（前端权威）：
-   - ROLE_FILE: `/home/dkjsiogu/.claude/.ccg/prompts/copilot/architect.md`
+2. **Gemini 计划草案**（前端权威）：
+   - ROLE_FILE: `~/.claude/.ccg/prompts/gemini/architect.md`
    - OUTPUT: Step-by-step plan + pseudo-code（重点：信息架构/交互/可访问性/视觉一致性）
 
 用 `TaskOutput` 等待两个模型的完整结果，并记录其建议的关键差异点。
@@ -161,12 +131,12 @@ mcp__ace-tool__search_context({
 ## 📋 实施计划：<任务名称>
 
 ### 任务类型
-- [ ] 前端 (→ Copilot)
+- [ ] 前端 (→ Gemini)
 - [ ] 后端 (→ Codex)
 - [ ] 全栈 (→ 并行)
 
 ### 技术方案
-<综合 Codex + Copilot 分析的最优方案>
+<综合 Codex + Gemini 分析的最优方案>
 
 ### 实施步骤
 1. <步骤 1> - 预期产物
@@ -255,6 +225,6 @@ mcp__ace-tool__search_context({
 
 1. **仅规划不实施** – 本命令不执行任何代码变更
 2. **不问 Y/N** – 只展示计划，让用户决定下一步
-3. **信任规则** – 后端以 Codex 为准，前端以 Copilot 为准
+3. **信任规则** – 后端以 Codex 为准，前端以 Gemini 为准
 4. 外部模型对文件系统**零写入权限**
 5. **SESSION_ID 交接** – 计划末尾必须包含 `CODEX_SESSION` / `GEMINI_SESSION`（供 `/ccg:execute resume <SESSION_ID>` 使用）

@@ -3,9 +3,9 @@
 处理需要一个角色为另一个角色提供规范/指导的场景。
 
 典型场景：
-- Minecraft mod: Claude 定义动画 API → Copilot 生成动画配置
-- Unity 游戏: Claude 设计系统接口 → Copilot 实现着色器
-- Web 应用: Claude 定义 API 契约 → Copilot 实现前端调用
+- Minecraft mod: Claude 定义动画 API → Gemini 生成动画配置
+- Unity 游戏: Claude 设计系统接口 → Gemini 实现着色器
+- Web 应用: Claude 定义 API 契约 → Gemini 实现前端调用
 
 ## 参数
 
@@ -13,8 +13,8 @@
 $ARGUMENTS: <source-role>:<target-role> <task-description>
 
 示例:
-/ccg:collab claude:copilot "为自定义生物实体生成行走和攻击动画"
-/ccg:collab claude:copilot "根据 API 规范实现登录表单"
+/ccg:collab claude:gemini "为自定义生物实体生成行走和攻击动画"
+/ccg:collab claude:gemini "根据 API 规范实现登录表单"
 ```
 
 ## 执行流程
@@ -55,7 +55,7 @@ $ARGUMENTS: <source-role>:<target-role> <task-description>
 
 ### Phase 3: 实现生成 (Target Role)
 
-使用 **$2** (如 copilot/gemini) 根据规范生成实现：
+使用 **$2** (如 gemini) 根据规范生成实现：
 
 **Prompt 模板**:
 ```
@@ -77,19 +77,28 @@ $ARGUMENTS: <source-role>:<target-role> <task-description>
 
 ### Phase 4: Codex 实现审查
 
-使用 **codex** 审查实现是否符合规范：
+使用 **`codex review`** 审查实现是否符合规范（Codex 自己读 diff，CC 不传代码）：
 
 **审查要点**:
 - 实现是否符合规范
 - 代码质量和最佳实践
 - 潜在问题和改进建议
 
+调用:
+```bash
+codex review --uncommitted
+# 或带自定义指令
+echo "审查实现是否符合规范，检查代码质量" | codex review --uncommitted -
+```
+
+**规则**：`run_in_background: true` + `timeout: 600000`
+
 ---
 
 ## Minecraft Mod 示例
 
 ```
-/ccg:collab claude:copilot "为自定义僵尸实体生成动画"
+/ccg:collab claude:gemini "为自定义僵尸实体生成动画"
 ```
 
 ### Phase 1 输出 (Claude):
@@ -127,7 +136,7 @@ registerAnimationController(new AnimationController<>(this, "controller", 0, sta
 }));
 ```
 
-### Phase 3 输出 (Copilot):
+### Phase 3 输出 (Gemini):
 ```json
 // animations/custom_zombie.animation.json
 {

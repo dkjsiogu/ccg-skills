@@ -1,5 +1,5 @@
 ---
-description: '多模型性能优化：Codex 后端优化 + Copilot 前端优化'
+description: '多模型性能优化：Codex 后端优化 + Gemini 前端优化'
 ---
 
 # Optimize - 多模型性能优化
@@ -16,56 +16,22 @@ description: '多模型性能优化：Codex 后端优化 + Copilot 前端优化'
 
 - 优化目标：$ARGUMENTS
 - Codex 专注后端性能（数据库、算法、缓存）
-- Copilot 专注前端性能（渲染、加载、交互）
+- Gemini 专注前端性能（渲染、加载、交互）
 
 ## 你的角色
 
 你是**性能工程师**，编排多模型优化流程：
 - **Codex** – 后端性能优化（**后端权威**）
-- **Copilot** – 前端性能优化（**前端权威**）
+- **Gemini** – 前端性能优化（**前端权威**）
 - **Claude (自己)** – 综合优化、实施变更
 
 ---
 
-## 多模型调用规范
+## Call Spec
 
-**调用语法**（并行用 `run_in_background: true`）：
+**调用规范详见 `~/.claude/.ccg/docs/callspec.md`**（语法、超时、会话复用、角色提示词表）。
 
-```
-Bash({
-  command: "/home/dkjsiogu/.claude/bin/codeagent-wrapper --backend <codex|copilot> - \"$PWD\" <<'EOF'
-ROLE_FILE: <角色提示词路径>
-<TASK>
-需求：<增强后的需求（如未增强则用 $ARGUMENTS）>
-上下文：<目标代码、现有性能指标等>
-</TASK>
-OUTPUT: 性能瓶颈列表、优化方案、预期收益
-EOF",
-  run_in_background: true,
-  timeout: 3600000,
-  description: "简短描述"
-})
-```
-
-**角色提示词**：
-
-| 模型 | 提示词 |
-|------|--------|
-| Codex | `/home/dkjsiogu/.claude/.ccg/prompts/codex/optimizer.md` |
-| Copilot | `/home/dkjsiogu/.claude/.ccg/prompts/copilot/optimizer.md` |
-
-**并行调用**：使用 `run_in_background: true` 启动，用 `TaskOutput` 等待结果。**必须等所有模型返回后才能进入下一阶段**。
-
-**等待后台任务**（使用最大超时 600000ms = 10 分钟）：
-
-```
-TaskOutput({ task_id: "<task_id>", block: true, timeout: 600000 })
-```
-
-**重要**：
-- 必须指定 `timeout: 600000`，否则默认只有 30 秒会导致提前超时。
-如果 10 分钟后仍未完成，继续用 `TaskOutput` 轮询，**绝对不要 Kill 进程**。
-- 若因等待时间过长跳过了等待 TaskOutput 结果，则**必须调用 `AskUserQuestion` 工具询问用户选择继续等待还是 Kill Task。禁止直接 Kill Task。**
+**本命令角色提示词**：Codex `optimizer.md` + Gemini `optimizer.md`
 
 ---
 
@@ -81,7 +47,7 @@ TaskOutput({ task_id: "<task_id>", block: true, timeout: 600000 })
 
 ### 🔍 阶段 0：Prompt 增强（可选）
 
-`[模式：准备]` - 如 ace-tool MCP 可用，调用 `mcp__ace-tool__enhance_prompt`，**用增强结果替代原始 $ARGUMENTS，后续调用 Codex/Copilot 时传入增强后的需求**
+`[模式：准备]` - 如 ace-tool MCP 可用，调用 `mcp__ace-tool__enhance_prompt`，**用增强结果替代原始 $ARGUMENTS，后续调用 Codex/Gemini 时传入增强后的需求**
 
 ### 🔍 阶段 1：性能基线
 
@@ -98,18 +64,16 @@ TaskOutput({ task_id: "<task_id>", block: true, timeout: 600000 })
 **⚠️ 必须发起两个并行 Bash 调用**（参照上方调用规范）：
 
 1. **Codex 后端分析**：`Bash({ command: "...--backend codex...", run_in_background: true })`
-   - ROLE_FILE: `/home/dkjsiogu/.claude/.ccg/prompts/codex/optimizer.md`
+   - ROLE_FILE: `~/.claude/.ccg/prompts/codex/optimizer.md`
    - 需求：分析后端性能问题（$ARGUMENTS）
    - OUTPUT：性能瓶颈列表、优化方案、预期收益
 
-2. **Copilot 前端分析**：`Bash({ command: "...--backend gemini...", run_in_background: true })`
-   - ROLE_FILE: `/home/dkjsiogu/.claude/.ccg/prompts/copilot/optimizer.md`
+2. **Gemini 前端分析**：`Bash({ command: "...--backend gemini...", run_in_background: true })`
+   - ROLE_FILE: `~/.claude/.ccg/prompts/gemini/optimizer.md`
    - 需求：分析前端性能问题（Core Web Vitals）
    - OUTPUT：性能瓶颈列表、优化方案、预期收益
 
-用 `TaskOutput` 等待两个模型的完整结果。**必须等所有模型返回后才能进入下一阶段**。
-
-**务必遵循上方 `多模型调用规范` 的 `重要` 指示**
+用 `TaskOutput` 等待两个模型的完整结果。
 
 ### 🔀 阶段 3：优化整合
 
@@ -156,4 +120,4 @@ TaskOutput({ task_id: "<task_id>", block: true, timeout: 600000 })
 1. **先测量后优化** – 没有数据不盲目优化
 2. **性价比优先** – 高影响 + 低难度优先
 3. **不破坏功能** – 优化不能引入 bug
-4. **信任规则** – 后端以 Codex 为准，前端以 Copilot 为准
+4. **信任规则** – 后端以 Codex 为准，前端以 Gemini 为准

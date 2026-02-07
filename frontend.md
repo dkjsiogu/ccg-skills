@@ -1,5 +1,5 @@
 ---
-description: '前端专项工作流（研究→构思→计划→执行→优化→评审），Copilot 主导'
+description: '前端专项工作流（研究→构思→计划→执行→优化→评审），Gemini 主导'
 ---
 
 # Frontend - 前端专项开发
@@ -13,7 +13,7 @@ description: '前端专项工作流（研究→构思→计划→执行→优化
 ## 上下文
 
 - 前端任务：$ARGUMENTS
-- Copilot 主导，Codex 辅助参考
+- Gemini 主导，Codex 辅助参考
 - 适用：组件设计、响应式布局、UI 动画、样式优化
 
 ## 你的角色
@@ -21,57 +21,25 @@ description: '前端专项工作流（研究→构思→计划→执行→优化
 你是**前端编排者**，协调多模型完成 UI/UX 任务（研究 → 构思 → 计划 → 执行 → 优化 → 评审），用中文协助用户。
 
 **协作模型**：
-- **Copilot** – 前端 UI/UX（**前端权威，可信赖**）
+- **Gemini** – 前端 UI/UX（**前端权威，可信赖**）
 - **Codex** – 后端视角（**前端意见仅供参考**）
 - **Claude (自己)** – 编排、计划、执行、交付
 
 ---
 
-## 多模型调用规范
+## Call Spec
 
-**调用语法**：
+**调用规范详见 `~/.claude/.ccg/docs/callspec.md`**（语法、超时、会话复用）。
 
-```
-# 新会话调用
-Bash({
-  command: "/home/dkjsiogu/.claude/bin/codeagent-wrapper --backend gemini - \"$PWD\" <<'EOF'
-ROLE_FILE: <角色提示词路径>
-<TASK>
-需求：<增强后的需求（如未增强则用 $ARGUMENTS）>
-上下文：<前序阶段收集的项目上下文、分析结果等>
-</TASK>
-OUTPUT: 期望输出格式
-EOF",
-  run_in_background: false,
-  timeout: 3600000,
-  description: "简短描述"
-})
+**本命令仅用 Gemini**（`--backend gemini --gemini-model gemini-3-pro-preview`），角色提示词：
 
-# 复用会话调用
-Bash({
-  command: "/home/dkjsiogu/.claude/bin/codeagent-wrapper --backend gemini resume <SESSION_ID> - \"$PWD\" <<'EOF'
-ROLE_FILE: <角色提示词路径>
-<TASK>
-需求：<增强后的需求（如未增强则用 $ARGUMENTS）>
-上下文：<前序阶段收集的项目上下文、分析结果等>
-</TASK>
-OUTPUT: 期望输出格式
-EOF",
-  run_in_background: false,
-  timeout: 3600000,
-  description: "简短描述"
-})
-```
-
-**角色提示词**：
-
-| 阶段 | Copilot |
+| 阶段 | Gemini |
 |------|--------|
-| 分析 | `/home/dkjsiogu/.claude/.ccg/prompts/copilot/analyzer.md` |
-| 规划 | `/home/dkjsiogu/.claude/.ccg/prompts/copilot/architect.md` |
-| 审查 | `/home/dkjsiogu/.claude/.ccg/prompts/codex/reviewer.md` (Codex 统一审查) |
+| 分析 | `~/.claude/.ccg/prompts/gemini/analyzer.md` |
+| 规划 | `~/.claude/.ccg/prompts/gemini/architect.md` |
+| 审查 | `~/.claude/.ccg/prompts/gemini/reviewer.md` |
 
-**会话复用**：每次调用返回 `SESSION_ID: xxx`，后续阶段用 `resume xxx` 复用上下文。阶段 2 保存 `GEMINI_SESSION`，阶段 3 和 5 使用 `resume` 复用。
+**会话复用**：阶段 2 保存 `GEMINI_SESSION`，阶段 3 和 5 使用 `resume` 复用。
 
 ---
 
@@ -87,7 +55,7 @@ EOF",
 
 ### 🔍 阶段 0：Prompt 增强（可选）
 
-`[模式：准备]` - 如 ace-tool MCP 可用，调用 `mcp__ace-tool__enhance_prompt`，**用增强结果替代原始 $ARGUMENTS，后续调用 Copilot 时传入增强后的需求**
+`[模式：准备]` - 如 ace-tool MCP 可用，调用 `mcp__ace-tool__enhance_prompt`，**用增强结果替代原始 $ARGUMENTS，后续调用 Gemini 时传入增强后的需求**
 
 ### 🔍 阶段 1：研究
 
@@ -98,10 +66,10 @@ EOF",
 
 ### 💡 阶段 2：构思
 
-`[模式：构思]` - Copilot 主导分析
+`[模式：构思]` - Gemini 主导分析
 
-**⚠️ 必须调用 Copilot**（参照上方调用规范）：
-- ROLE_FILE: `/home/dkjsiogu/.claude/.ccg/prompts/copilot/analyzer.md`
+**⚠️ 必须调用 Gemini**（参照上方调用规范）：
+- ROLE_FILE: `~/.claude/.ccg/prompts/gemini/analyzer.md`
 - 需求：增强后的需求（如未增强则用 $ARGUMENTS）
 - 上下文：阶段 1 收集的项目上下文
 - OUTPUT: UI 可行性分析、推荐方案（至少 2 个）、用户体验评估
@@ -112,10 +80,10 @@ EOF",
 
 ### 📋 阶段 3：计划
 
-`[模式：计划]` - Copilot 主导规划
+`[模式：计划]` - Gemini 主导规划
 
-**⚠️ 必须调用 Copilot**（使用 `resume <GEMINI_SESSION>` 复用会话）：
-- ROLE_FILE: `/home/dkjsiogu/.claude/.ccg/prompts/copilot/architect.md`
+**⚠️ 必须调用 Gemini**（使用 `resume <GEMINI_SESSION>` 复用会话）：
+- ROLE_FILE: `~/.claude/.ccg/prompts/gemini/architect.md`
 - 需求：用户选择的方案
 - 上下文：阶段 2 的分析结果
 - OUTPUT: 组件结构、UI 流程、样式方案
@@ -132,10 +100,10 @@ Claude 综合规划，请求用户批准后存入 `.claude/plan/任务名.md`
 
 ### 🚀 阶段 5：优化
 
-`[模式：优化]` - Codex 代码审查 + Claude 综合
+`[模式：优化]` - Gemini 主导审查
 
-**⚠️ 必须调用 Copilot**（参照上方调用规范）：
-- ROLE_FILE: /home/dkjsiogu/.claude/.ccg/prompts/codex/reviewer.md`
+**⚠️ 必须调用 Gemini**（参照上方调用规范）：
+- ROLE_FILE: `~/.claude/.ccg/prompts/gemini/reviewer.md`
 - 需求：审查以下前端代码变更
 - 上下文：git diff 或代码内容
 - OUTPUT: 可访问性、响应式、性能、设计一致性问题列表
@@ -154,7 +122,7 @@ Claude 综合规划，请求用户批准后存入 `.claude/plan/任务名.md`
 
 ## 关键规则
 
-1. **Copilot 前端意见可信赖**
+1. **Gemini 前端意见可信赖**
 2. **Codex 前端意见仅供参考**
 3. 外部模型对文件系统**零写入权限**
 4. Claude 负责所有代码写入和文件操作
